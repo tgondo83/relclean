@@ -7,8 +7,8 @@ services:
     runtime: node
     region: oregon
 
-    # Build: install deps for backend only (frontend is deployed to Vercel)
-    buildCommand: cd Backend && npm install && npm run build
+    # Build: install ALL deps (including devDeps for TypeScript), compile, then prune
+    buildCommand: cd Backend && npm install --include=dev && npm run build && npm prune --production
 
     # Start: run the compiled backend API
     startCommand: node Backend/dist/index.js
