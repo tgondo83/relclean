@@ -1,0 +1,31 @@
+# render.yaml — Deploy RelClean as a single Web Service on Render.com
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: relclean
+    runtime: node
+    region: oregon
+
+    # Build: install deps for backend only (frontend is deployed to Vercel)
+    buildCommand: cd Backend && npm install && npm run build
+
+    # Start: run the compiled backend API
+    startCommand: node Backend/dist/index.js
+
+    rootDirectory: "/"
+
+    # Health-check endpoint
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000          # Render uses 10000 by default; override if needed
+      - key: MONGODB_URI
+        sync: false           # Set this secret in the Render dashboard
+      - key: JWT_SECRET
+        generateValue: true   # Render auto-generates a secure random value
+      - key: FRONTEND_URL
+        value: https://relclean.vercel.app  # Add more origins comma-separated if needed
