@@ -12,6 +12,18 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
+  build: {
+    target: ["es2020", "safari14", "ios14"],
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "react-router-dom"],
+          ui: ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-tabs", "@radix-ui/react-select"],
+          charts: ["recharts"],
+        },
+      },
+    },
+  },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {

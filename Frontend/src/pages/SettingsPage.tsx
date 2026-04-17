@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 interface CompanyDetails {
   name: string;
@@ -52,6 +53,7 @@ interface Branch {
 }
 
 const SettingsPage = () => {
+  usePageTitle("Settings");
   const [companyDetails, setCompanyDetails] = useState<CompanyDetails>({
     name: "RelClean Dry Cleaners",
     address: "123 Main Street, Harare",

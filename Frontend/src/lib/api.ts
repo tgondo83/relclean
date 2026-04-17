@@ -7,7 +7,26 @@ interface ApiResponse<T> {
 }
 
 class ApiClient {
+      async getDeletedOrders(branchId?: string, params?: { limit?: number; skip?: number }) {
+        const sp = new URLSearchParams();
+        if (branchId) sp.set('branchId', branchId);
+        if (params?.limit) sp.set('limit', String(params.limit));
+        if (params?.skip) sp.set('skip', String(params.skip));
+        const query = sp.toString();
+        return this.request(`/orders/deleted${query ? `?${query}` : ''}`);
+      }
+    async getAuditLogs(params?: { userId?: string; limit?: number; action?: string }) {
+      const query = params
+        ? '?' + new URLSearchParams(
+            Object.entries(params)
+              .filter(([_, v]) => v !== undefined)
+              .map(([k, v]) => [k, String(v)])
+          ).toString()
+        : '';
+      return this.request<{ logs: any[] }>(`/audit-logs${query}`);
+    }
   private baseUrl: string;
+  private inflight = new Map<string, Promise<ApiResponse<any>>>();
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -19,6 +38,28 @@ class ApiClient {
   }
 
   private async request<T>(
+    endpoint: string,
+    options?: RequestInit
+  ): Promise<ApiResponse<T>> {
+    // Deduplicate identical concurrent GET requests
+    const method = options?.method?.toUpperCase() || 'GET';
+    const cacheKey = method === 'GET' ? `GET:${endpoint}` : '';
+
+    if (cacheKey && this.inflight.has(cacheKey)) {
+      return this.inflight.get(cacheKey)! as Promise<ApiResponse<T>>;
+    }
+
+    const promise = this._doRequest<T>(endpoint, options);
+
+    if (cacheKey) {
+      this.inflight.set(cacheKey, promise);
+      promise.finally(() => this.inflight.delete(cacheKey));
+    }
+
+    return promise;
+  }
+
+  private async _doRequest<T>(
     endpoint: string,
     options?: RequestInit
   ): Promise<ApiResponse<T>> {
@@ -55,9 +96,14 @@ class ApiClient {
   }
 
   // Orders
-  async getOrders(branchId?: string) {
-    const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
-    return this.request(`/orders${query}`);
+  async getOrders(branchId?: string, params?: { customer?: string; limit?: number; skip?: number }) {
+    const sp = new URLSearchParams();
+    if (branchId) sp.set('branchId', branchId);
+    if (params?.customer) sp.set('customer', params.customer);
+    if (params?.limit) sp.set('limit', String(params.limit));
+    if (params?.skip) sp.set('skip', String(params.skip));
+    const query = sp.toString();
+    return this.request(`/orders${query ? `?${query}` : ''}`);
   }
 
   async getOrder(id: string) {
@@ -183,6 +229,11 @@ class ApiClient {
   async getDailyOrders(branchId?: string, days?: number) {
     const query = this.buildMetricsQuery({ branchId, days: days?.toString() });
     return this.request(`/metrics/daily-orders${query}`);
+  }
+
+  async getDailyOverview(branchId?: string, date?: string) {
+    const query = this.buildMetricsQuery({ branchId, date });
+    return this.request(`/metrics/daily-overview${query}`);
   }
 
   // Users

@@ -7,8 +7,10 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 const AddCustomerPage = () => {
+  usePageTitle("Add Customer");
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({

@@ -15,12 +15,13 @@ customersRouter.get('/', async (req, res) => {
       return res.json({ customers: getAllCustomers() });
     }
     
-    const customers = await Customer.find().sort({ createdAt: -1 });
-
-    // Aggregate order counts by customer name
-    const orderCounts = await Order.aggregate([
-      { $group: { _id: '$customer', count: { $sum: 1 }, totalSpent: { $sum: '$total' } } }
+    const [customers, orderCounts] = await Promise.all([
+      Customer.find().sort({ createdAt: -1 }).lean(),
+      Order.aggregate([
+        { $group: { _id: '$customer', count: { $sum: 1 }, totalSpent: { $sum: '$total' } } }
+      ]),
     ]);
+
     const countMap: Record<string, { count: number; totalSpent: number }> = {};
     for (const entry of orderCounts) {
       if (entry._id) countMap[entry._id] = { count: entry.count, totalSpent: entry.totalSpent };
@@ -29,12 +30,13 @@ customersRouter.get('/', async (req, res) => {
     const enriched = customers.map((c) => {
       const stats = countMap[c.name] || { count: 0, totalSpent: 0 };
       return {
-        ...c.toObject(),
+        ...c,
         totalOrders: stats.count,
         totalSpent: stats.totalSpent,
       };
     });
 
+    res.set('Cache-Control', 'private, max-age=10');
     res.json({ customers: enriched });
   } catch (error) {
     console.error('Error fetching customers:', error);
@@ -55,7 +57,7 @@ customersRouter.get('/:id', async (req, res) => {
       return res.json(customer);
     }
     
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findById(id).lean();
     
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
@@ -69,7 +71,7 @@ customersRouter.get('/:id', async (req, res) => {
 });
 
 // Create new customer
-customersRouter.post('/', async (req, res) => {
+customersRouter.post('/', logActivity('customer_create'), async (req, res) => {
   try {
     const { name, phone, email, address } = req.body;
 
@@ -126,7 +128,7 @@ customersRouter.post('/', async (req, res) => {
 });
 
 // Update customer
-customersRouter.put('/:id', async (req, res) => {
+customersRouter.put('/:id', logActivity('customer_update'), async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -145,7 +147,7 @@ customersRouter.put('/:id', async (req, res) => {
 });
 
 // Delete customer
-customersRouter.delete('/:id', async (req, res) => {
+customersRouter.delete('/:id', logActivity('customer_delete'), async (req, res) => {
   try {
     const { id } = req.params;
     

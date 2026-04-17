@@ -57,9 +57,24 @@ metricsRouter.get('/dashboard', async (req, res) => {
       Order.countDocuments({ ...orderBaseFilter, status: 'cancelled' }),
     ]);
 
-    // Revenue from completed payments (captures actual money received regardless of order status)
+    // Revenue from completed payments — scoped to branch when specified
     const revenueAgg = await Payment.aggregate([
       { $match: { paymentStatus: 'completed', ...paymentDateFilter } },
+      {
+        $lookup: {
+          from: 'orders',
+          localField: 'orderId',
+          foreignField: '_id',
+          as: 'orderInfo'
+        }
+      },
+      { $unwind: { path: '$orderInfo', preserveNullAndEmptyArrays: false } },
+      {
+        $match: {
+          'orderInfo.status': { $ne: 'cancelled' },
+          ...(branchFilter.branchId ? { 'orderInfo.branchId': branchFilter.branchId } : {})
+        }
+      },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const totalRevenue = revenueAgg[0]?.total || 0;
@@ -405,5 +420,110 @@ metricsRouter.get('/revenue-by-currency', async (req, res) => {
   } catch (error) {
     console.error('Error fetching revenue by currency:', error);
     res.status(500).json({ error: 'Failed to fetch revenue by currency' });
+  }
+});
+
+// Get daily overview — all figures computed server-side, scoped to the requested day and branch
+metricsRouter.get('/daily-overview', async (req, res) => {
+  try {
+    const { branchId, date } = req.query;
+    const branchFilter = buildBranchFilter(branchId as string);
+
+    // Build start/end of the requested calendar day
+    const dateStr = (date as string) || new Date().toISOString().slice(0, 10);
+    const [yr, mo, dy] = dateStr.split('-').map(Number);
+    const dayStart = new Date(yr, mo - 1, dy, 0, 0, 0, 0);
+    const dayEnd   = new Date(yr, mo - 1, dy, 23, 59, 59, 999);
+
+    // 1. Fetch orders for this day and branch (use the 'date' field — that is what is set on order creation)
+    const orders = await Order.find({
+      ...branchFilter,
+      date: { $gte: dayStart, $lte: dayEnd },
+      deleted: { $ne: true },
+    }).lean() as any[];
+
+    const totalOrders = orders.length;
+
+    const totalPieces = orders.reduce((sum: number, o: any) => {
+      if (o.totalPieces && o.totalPieces > 0) return sum + o.totalPieces;
+      if (Array.isArray(o.items)) {
+        return sum + o.items.reduce((s: number, item: any) => s + ((item.pieces || 1) * (item.qty || 1)), 0);
+      }
+      return sum;
+    }, 0);
+
+    const unpaidAmount = orders.reduce((sum: number, o: any) =>
+      sum + Math.max(0, (o.total || 0) - (o.paidAmount || 0)), 0);
+
+    // 2. Status breakdown from orders
+    const statusCounts: Record<string, number> = {};
+    for (const o of orders) statusCounts[o.status] = (statusCounts[o.status] || 0) + 1;
+    const ordersByStatus = Object.entries(statusCounts)
+      .map(([status, count]) => ({ status: status.charAt(0).toUpperCase() + status.slice(1), count }))
+      .filter(s => s.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    // 3. Revenue = completed payments whose orderId is in today's order set
+    const orderIds = orders.map((o: any) => o._id);
+
+    let totalRevenue = 0;
+    let revenueByPaymentMethod: { method: string; amount: number; count: number }[] = [];
+    let revenueByCurrency: { currency: string; symbol: string; originalAmount: number; usdAmount: number; count: number }[] = [];
+
+    const methodLabels: Record<string, string> = {
+      cash: 'Cash', card: 'Card', mobile_money: 'Mobile Money', bank_transfer: 'Bank Transfer'
+    };
+    const currencySymbols: Record<string, string> = { USD: '$', ZWL: 'Z$' };
+
+    if (orderIds.length > 0) {
+      const paymentBase = { orderId: { $in: orderIds }, paymentStatus: 'completed' };
+
+      const [revAgg, methodAgg, currAgg] = await Promise.all([
+        Payment.aggregate([
+          { $match: paymentBase },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]),
+        Payment.aggregate([
+          { $match: paymentBase },
+          { $group: { _id: '$paymentMethod', amount: { $sum: '$amount' }, count: { $sum: 1 } } },
+          { $sort: { amount: -1 } },
+        ]),
+        Payment.aggregate([
+          { $match: paymentBase },
+          { $group: { _id: '$currency', originalAmount: { $sum: '$originalAmount' }, usdAmount: { $sum: '$amount' }, count: { $sum: 1 } } },
+          { $sort: { usdAmount: -1 } },
+        ]),
+      ]);
+
+      totalRevenue = revAgg[0]?.total || 0;
+
+      revenueByPaymentMethod = (methodAgg as any[]).map((m) => ({
+        method: methodLabels[m._id] || m._id,
+        amount: m.amount,
+        count: m.count,
+      }));
+
+      revenueByCurrency = (currAgg as any[]).map((c) => ({
+        currency: c._id,
+        symbol: currencySymbols[c._id] || '',
+        originalAmount: c.originalAmount,
+        usdAmount: c.usdAmount,
+        count: c.count,
+      }));
+    }
+
+    res.json({
+      totalOrders,
+      totalPieces,
+      totalRevenue,
+      unpaidAmount,
+      ordersByStatus,
+      revenueByPaymentMethod,
+      revenueByCurrency,
+      topItems: [], // removed from day view
+    });
+  } catch (error) {
+    console.error('Error fetching daily overview:', error);
+    res.status(500).json({ error: 'Failed to fetch daily overview' });
   }
 });

@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, Minus, Plus, ShoppingCart, User, X } from "lucide-react";
+import { Search, Minus, Plus, ShoppingCart, User, X, Pencil, PackagePlus } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { api } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useBranch, getBranchId } from "@/context/BranchContext";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const categories = ["All", "Dry Cleaning", "Laundry", "Pressing"];
 
@@ -57,7 +66,7 @@ interface CatalogItem {
   isActive?: boolean;
 }
 
-type CartItem = { _id: string; name: string; price: number; qty: number; pieces: number };
+type CartItem = { _id: string; name: string; price: number; originalPrice: number; qty: number; pieces: number };
 
 interface Customer {
   _id: string;
@@ -68,6 +77,7 @@ interface Customer {
 }
 
 const NewOrderPage = () => {
+  usePageTitle("New Order");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [itemSearch, setItemSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -87,7 +97,19 @@ const NewOrderPage = () => {
     email: "",
     address: "",
   });
+  const [orderNotes, setOrderNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
+  const [tempPriceValue, setTempPriceValue] = useState("");
+  const [isCustomItemOpen, setIsCustomItemOpen] = useState(false);
+  const [customItem, setCustomItem] = useState({
+    name: "",
+    price: "",
+    qty: "1",
+    pieces: "1",
+    category: "Dry Cleaning",
+    taxExempt: false,
+  });
   const { selectedBranch } = useBranch();
   const navigate = useNavigate();
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -337,8 +359,33 @@ const NewOrderPage = () => {
     setCart((prev) => {
       const existing = prev.find((c) => c._id === item._id);
       if (existing) return prev.map((c) => (c._id === item._id ? { ...c, qty: c.qty + 1 } : c));
-      return [...prev, { _id: item._id, name: item.name, price: item.price, qty: 1, pieces: item.pieces || 1 }];
+      return [...prev, { _id: item._id, name: item.name, price: item.price, originalPrice: item.price, qty: 1, pieces: item.pieces || 1 }];
     });
+  };
+
+  const handleAddCustomItem = () => {
+    const name = customItem.name.trim();
+    const price = parseFloat(customItem.price);
+    const qty = Math.max(1, parseInt(customItem.qty, 10) || 1);
+    const pieces = Math.max(1, parseInt(customItem.pieces, 10) || 1);
+    if (!name) return;
+    if (isNaN(price) || price < 0) return;
+    // Use a synthetic ID that won't collide with real catalog IDs
+    const tempId = `custom-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setCart((prev) => [
+      ...prev,
+      { _id: tempId, name, price, originalPrice: price, qty, pieces },
+    ]);
+    setIsCustomItemOpen(false);
+    setCustomItem({ name: "", price: "", qty: "1", pieces: "1", category: "Dry Cleaning", taxExempt: false });
+  };
+
+  const commitPriceEdit = (id: string) => {
+    const parsed = parseFloat(tempPriceValue);
+    if (!isNaN(parsed) && parsed >= 0) {
+      setCart((prev) => prev.map((c) => c._id === id ? { ...c, price: Math.round(parsed * 100) / 100 } : c));
+    }
+    setEditingPriceId(null);
   };
 
   const updateQty = (id: string, delta: number) => {
@@ -346,6 +393,20 @@ const NewOrderPage = () => {
       prev
         .map((c) => (c._id === id ? { ...c, qty: c.qty + delta } : c))
         .filter((c) => c.qty > 0)
+    );
+  };
+
+  const setQty = (id: string, qty: number) => {
+    const value = Math.max(1, Math.floor(qty));
+    setCart((prev) =>
+      prev.map((c) => (c._id === id ? { ...c, qty: value } : c))
+    );
+  };
+
+  const updatePieces = (id: string, pieces: number) => {
+    const value = Math.max(1, Math.floor(pieces));
+    setCart((prev) =>
+      prev.map((c) => (c._id === id ? { ...c, pieces: value } : c))
     );
   };
 
@@ -401,29 +462,38 @@ const NewOrderPage = () => {
 
   const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
-    
     if (!selectedBranch) {
       alert("Please select a branch");
       return;
     }
-    
+    if (!selectedCustomer) {
+      alert("Please select a customer before capturing a new order.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const customerId = await ensureCustomerId();
-
       // Generate prefix from branch name if not provided
       const branchPrefix = selectedBranch.prefix || selectedBranch.name.substring(0, 2).toUpperCase();
       const branchId = getBranchId(selectedBranch);
-
       if (!branchId) {
         alert("Please select a branch");
         return;
       }
-      
+      const priceOverrides = cart
+        .filter((item) => item.price !== item.originalPrice)
+        .map((item) => ({
+          itemId: item._id,
+          itemName: item.name,
+          originalPrice: item.originalPrice,
+          newPrice: item.price,
+        }));
+
       const orderData = {
         branchId,
         branchPrefix: branchPrefix,
         customer: selectedCustomer?.name || customerSearch || "Walk-in Customer",
+        customerPhone: selectedCustomer?.phone || "",
         items: cart.map(item => ({
           name: item.name,
           price: item.price,
@@ -432,66 +502,52 @@ const NewOrderPage = () => {
         })),
         totalPieces: totalPieces,
         total: total,
-        status: "processing"
+        status: "processing",
+        notes: orderNotes,
+        ...(priceOverrides.length > 0 && { priceOverrides }),
       };
-
-      const { data, error } = await api.createOrder(orderData);
-      
-      if (error) {
-        alert("Failed to create order: " + error);
-      } else {
-        const createdOrderId = extractCreatedId(data) || (data as { orderNumber?: string } | undefined)?.orderNumber;
-
-        if (createdOrderId && customerId) {
-          try {
-            localStorage.setItem(`order_customer_${createdOrderId}`, customerId);
-          } catch (storageError) {
-            console.warn("Failed to persist customer mapping:", storageError);
-          }
+      // Navigate to payment page with order data — order is NOT saved to DB yet.
+      // It will be created when the user presses "Complete & Print Receipt".
+      navigate("/payment", {
+        state: {
+          order: {
+            orderNumber: "",
+            branchId,
+            branchPrefix: branchPrefix,
+            customer: orderData.customer,
+            items: orderData.items,
+            totalPieces: totalPieces,
+            total: total,
+            status: "processing",
+            notes: orderNotes,
+          },
+          customerId,
+          customerPhone: selectedCustomer?.phone || "",
+          isNewOrder: true,
+          pendingOrderData: orderData,
         }
-
-        // Navigate to payment page with order data
-        const paymentUrl = createdOrderId
-          ? `/payment?orderId=${encodeURIComponent(createdOrderId)}`
-          : "/payment";
-
-        navigate(paymentUrl, { 
-          state: { 
-            order: {
-              orderNumber: (data as { orderNumber?: string } | undefined)?.orderNumber,
-              branchId,
-              branchPrefix: branchPrefix,
-              customer: orderData.customer,
-              items: orderData.items,
-              totalPieces: totalPieces,
-              total: total,
-              status: "processing"
-            },
-            orderId: createdOrderId,
-            customerId,
-          } 
-        });
-        // Clear cart for next order
-        setCart([]);
-        setCustomerSearch("");
-        setSelectedCustomer(null);
-      }
+      });
+      // Clear cart for next order
+      setCart([]);
+      setCustomerSearch("");
+      setSelectedCustomer(null);
+      setOrderNotes("");
     } catch (error) {
-      console.error("Error placing order:", error);
-      alert("Failed to place order. Please try again.");
+      console.error("Error preparing order:", error);
+      alert("Failed to prepare order. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <>
+    <div className="flex flex-col h-screen overflow-hidden">
       <AppHeader title="New Order" />
-      <div className="flex-1 flex gap-6 p-6 overflow-hidden">
+      <div className="flex-1 flex gap-6 p-6 overflow-hidden min-h-0">
         {/* Left: Item Selection */}
-        <div className="flex-1 flex flex-col min-w-0 space-y-4">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 space-y-4">
           {/* Customer and Branch Selection */}
-          <Card>
+          <Card className="shrink-0">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center gap-3">
                 <User className="w-5 h-5 text-muted-foreground shrink-0" />
@@ -645,7 +701,7 @@ const NewOrderPage = () => {
           </Card>
 
           {/* Item Search and Category Filter */}
-          <div className="space-y-3">
+          <div className="space-y-3 shrink-0">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -696,8 +752,21 @@ const NewOrderPage = () => {
             </div>
           </div>
 
+          {/* Add Custom Item button */}
+          <div className="shrink-0 flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-muted-foreground hover:text-foreground"
+              onClick={() => setIsCustomItemOpen(true)}
+            >
+              <PackagePlus className="w-4 h-4" />
+              Add Unlisted Item
+            </Button>
+          </div>
+
           {/* Items Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto flex-1">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto flex-1 min-h-0">
             {isLoadingItems ? (
               <div className="col-span-full py-8 text-center text-muted-foreground">
                 Loading items...
@@ -739,7 +808,7 @@ const NewOrderPage = () => {
         </div>
 
         {/* Right: Cart */}
-        <Card className="w-[340px] shrink-0 flex flex-col">
+        <Card className="w-[340px] shrink-0 flex flex-col h-full overflow-hidden">
           <div className="p-4 border-b border-border">
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-accent" />
@@ -759,8 +828,40 @@ const NewOrderPage = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="text-sm font-medium text-foreground">{item.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        ${item.price.toFixed(2)} × {item.qty}
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        {editingPriceId === item._id ? (
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={tempPriceValue}
+                            onChange={(e) => setTempPriceValue(e.target.value)}
+                            onBlur={() => commitPriceEdit(item._id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitPriceEdit(item._id);
+                              if (e.key === 'Escape') setEditingPriceId(null);
+                            }}
+                            autoFocus
+                            className="w-16 h-5 text-center text-xs border border-border rounded px-1 bg-background [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        ) : (
+                          <>
+                            <span className={item.price !== item.originalPrice ? "text-warning font-semibold" : ""}>
+                              ${item.price.toFixed(2)}
+                            </span>
+                            {item.price !== item.originalPrice && (
+                              <span className="line-through text-muted-foreground/50">${item.originalPrice.toFixed(2)}</span>
+                            )}
+                            <button
+                              onClick={() => { setEditingPriceId(item._id); setTempPriceValue(item.price.toFixed(2)); }}
+                              className="hover:text-foreground transition-colors ml-0.5"
+                              title="Edit price for this order only"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
+                        <span>× {item.qty}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -770,7 +871,16 @@ const NewOrderPage = () => {
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
-                      <span className="text-sm font-semibold w-5 text-center">{item.qty}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.qty}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!isNaN(val) && val >= 1) setQty(item._id, val);
+                        }}
+                        className="w-10 h-7 text-center text-sm font-semibold bg-transparent border border-border rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
                       <button
                         onClick={() => updateQty(item._id, 1)}
                         className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center hover:bg-secondary/80"
@@ -780,7 +890,32 @@ const NewOrderPage = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>{item.pieces} pcs × {item.qty} = {item.pieces * item.qty} total pcs</span>
+                    <span className="flex items-center gap-1">
+                      <button
+                        onClick={() => updatePieces(item._id, item.pieces - 1)}
+                        disabled={item.pieces <= 1}
+                        className="w-5 h-5 rounded bg-secondary flex items-center justify-center hover:bg-secondary/80 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Minus className="w-2.5 h-2.5" />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.pieces}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!isNaN(val)) updatePieces(item._id, val);
+                        }}
+                        className="w-8 h-5 text-center text-xs font-semibold bg-transparent border border-border rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        onClick={() => updatePieces(item._id, item.pieces + 1)}
+                        className="w-5 h-5 rounded bg-secondary flex items-center justify-center hover:bg-secondary/80"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                      </button>
+                      <span className="ml-1">pcs × {item.qty} = {item.pieces * item.qty} total pcs</span>
+                    </span>
                   </div>
                 </div>
               ))
@@ -788,6 +923,18 @@ const NewOrderPage = () => {
           </div>
 
           <div className="p-4 border-t border-border space-y-3">
+            {/* Order Notes Section */}
+            <div className="space-y-1">
+              <Label htmlFor="order-notes" className="text-sm">Order Notes</Label>
+              <textarea
+                id="order-notes"
+                className="w-full min-h-[60px] rounded border border-border bg-background px-2 py-1 text-sm resize-vertical focus:outline-none focus:ring-2 focus:ring-accent"
+                placeholder="Add any special instructions or notes for this order..."
+                value={orderNotes}
+                onChange={e => setOrderNotes(e.target.value)}
+                maxLength={500}
+              />
+            </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Total Pieces</span>
               <span className="font-semibold">{totalPieces}</span>
@@ -866,7 +1013,103 @@ const NewOrderPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+
+      {/* Add Custom / Unlisted Item Dialog */}
+      <Dialog open={isCustomItemOpen} onOpenChange={setIsCustomItemOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Describe an Item</DialogTitle>
+            <DialogDescription>
+              Add a temporary item to this order. It will not be saved to the catalog.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="ci-name">Name</Label>
+              <Input
+                id="ci-name"
+                value={customItem.name}
+                onChange={(e) => setCustomItem((p) => ({ ...p, name: e.target.value }))}
+                placeholder="e.g. Wedding Gown"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ci-qty">Quantity</Label>
+              <Input
+                id="ci-qty"
+                type="number"
+                min={1}
+                value={customItem.qty}
+                onChange={(e) => setCustomItem((p) => ({ ...p, qty: e.target.value }))}
+                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ci-price">Price (per item)</Label>
+              <Input
+                id="ci-price"
+                type="number"
+                min={0}
+                step={0.01}
+                value={customItem.price}
+                onChange={(e) => setCustomItem((p) => ({ ...p, price: e.target.value }))}
+                placeholder="0.00"
+                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ci-pieces">Pieces (per item)</Label>
+              <Input
+                id="ci-pieces"
+                type="number"
+                min={1}
+                value={customItem.pieces}
+                onChange={(e) => setCustomItem((p) => ({ ...p, pieces: e.target.value }))}
+                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ci-section">Section</Label>
+              <Select
+                value={customItem.category}
+                onValueChange={(v) => setCustomItem((p) => ({ ...p, category: v }))}
+              >
+                <SelectTrigger id="ci-section">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.filter((c) => c !== "All").map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Tax Exempt</Label>
+              <div className="flex items-center h-10">
+                <Checkbox
+                  id="ci-tax"
+                  checked={customItem.taxExempt}
+                  onCheckedChange={(v) => setCustomItem((p) => ({ ...p, taxExempt: !!v }))}
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCustomItemOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleAddCustomItem}
+              disabled={!customItem.name.trim() || customItem.price === ""}
+            >
+              Add to Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 };
 

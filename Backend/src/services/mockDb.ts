@@ -15,6 +15,7 @@ interface OrderData {
   branchId: string;
   branchPrefix: string;
   customer: string;
+  customerPhone?: string;
   items: string[];
   total: number;
   status: string;

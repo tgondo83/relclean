@@ -12,15 +12,18 @@ export interface IOrder extends Document {
   branchId: mongoose.Types.ObjectId;
   branchPrefix: string;
   customer: string;
+  customerPhone?: string;
   items: IOrderItem[];
   totalPieces: number;
   total: number;
   paidAmount: number; // Total amount paid in USD
   paymentStatus: 'unpaid' | 'partial' | 'paid';
+  paymentMethod?: 'cash' | 'card' | 'mobile_money' | 'bank_transfer';
   status: 'pending' | 'processing' | 'completed' | 'cancelled';
   date: Date;
   createdAt: Date;
   updatedAt: Date;
+  deleted?: boolean;
 }
 
 const OrderItemSchema = new Schema({
@@ -36,6 +39,7 @@ const OrderSchema = new Schema<IOrder>(
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', required: true },
     branchPrefix: { type: String, required: true, uppercase: true },
     customer: { type: String, required: true },
+    customerPhone: { type: String, default: '' },
     items: [OrderItemSchema],
     totalPieces: { type: Number, default: 0 },
     total: { type: Number, required: true, default: 0 },
@@ -45,12 +49,18 @@ const OrderSchema = new Schema<IOrder>(
       enum: ['unpaid', 'partial', 'paid'],
       default: 'unpaid'
     },
+    paymentMethod: {
+      type: String,
+      enum: ['cash', 'card', 'mobile_money', 'bank_transfer'],
+      default: null
+    },
     status: { 
       type: String, 
       enum: ['pending', 'processing', 'completed', 'cancelled'],
       default: 'processing'
     },
-    date: { type: Date, default: Date.now }
+    date: { type: Date, default: Date.now },
+    deleted: { type: Boolean, default: false }
   },
   {
     timestamps: true

@@ -11,6 +11,7 @@ import { companyRouter } from './company.js';
 import { authRouter } from './auth.js';
 import { authMiddleware } from '../middleware/auth.js';
 import itemsRouter from './items.js';
+import { auditLogRouter } from './auditLogs.js';
 
 export const router = Router();
 
@@ -25,9 +26,11 @@ router.use('/metrics', authMiddleware, metricsRouter);
 router.use('/users', authMiddleware, usersRouter);
 router.use('/branches', authMiddleware, branchesRouter);
 router.use('/payments', authMiddleware, paymentsRouter);
+
 router.use('/exchange-rates', authMiddleware, exchangeRatesRouter);
 router.use('/company', authMiddleware, companyRouter);
 router.use('/items', authMiddleware, itemsRouter);
+router.use('/audit-logs', auditLogRouter);
 
 // Default route
 router.get('/', (req, res) => {

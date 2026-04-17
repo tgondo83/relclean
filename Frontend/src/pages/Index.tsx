@@ -7,6 +7,7 @@ import RecentOrders from "@/components/dashboard/RecentOrders";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { useBranch, getBranchId } from "@/context/BranchContext";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 interface CurrencyRevenue {
   currency: string;
@@ -19,6 +20,7 @@ interface CurrencyRevenue {
 }
 
 const Dashboard = () => {
+  usePageTitle("Dashboard");
   const { selectedBranch } = useBranch();
   const [metrics, setMetrics] = useState<any>(null);
   const [revenueByCurrency, setRevenueByCurrency] = useState<CurrencyRevenue[]>([]);

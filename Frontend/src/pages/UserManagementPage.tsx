@@ -65,6 +65,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useBranch } from "@/context/BranchContext";
 import { Checkbox } from "@/components/ui/checkbox";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 // ─── Permission definitions ───────────────────────────────────────────────────
 
@@ -145,6 +146,7 @@ const mapUser = (u: any): MappedUser => ({
 // â”€â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UserManagementPage = () => {
+  usePageTitle("User Management");
   const { user: currentUser } = useAuth();
   const { branches } = useBranch();
 
@@ -336,7 +338,24 @@ const UserManagementPage = () => {
     setIsDeleting(false);
   };
 
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  // ── Activity Log State ─────────────────────────────
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
+  // ── Fetch Audit Logs ───────────────────────────────
+  const fetchAuditLogs = async () => {
+    setIsLoadingLogs(true);
+    const params = filterUser ? { userId: filterUser } : {};
+    const { data, error } = await api.getAuditLogs(params);
+    if (!error && data?.logs) setAuditLogs(data.logs);
+    setIsLoadingLogs(false);
+  };
+
+  useEffect(() => {
+    fetchAuditLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterUser]);
 
   if (!canManage) {
     return (
@@ -664,28 +683,59 @@ const UserManagementPage = () => {
             </Card>
           </TabsContent>
 
-          {/* â”€â”€ ACTIVITY LOG TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── ACTIVITY LOG TAB ─────────────────────────────── */}
           <TabsContent value="activity" className="space-y-4">
             <Card className="animate-fade-in">
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Activity className="w-5 h-5 text-accent" />
                   {filterLabel
-                    ? `Activity Log â€” ${filterLabel}`
-                    : "Activity Log â€” All Users"}
+                    ? `Activity Log — ${filterLabel}`
+                    : "Activity Log — All Users"}
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <Activity className="w-10 h-10 text-muted-foreground/40" />
-                  <p className="text-sm font-medium text-muted-foreground">
-                    Activity tracking not yet available
-                  </p>
-                  <p className="text-xs text-muted-foreground/70 max-w-xs">
-                    Per-action audit logging has not been implemented on the
-                    backend yet. This will show user actions once enabled.
-                  </p>
-                </div>
+              <CardContent className="p-0">
+                {isLoadingLogs ? (
+                  <div className="py-10 text-center text-muted-foreground text-sm">
+                    Loading activity log…
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="py-10 text-center text-muted-foreground text-sm">
+                    No activity log entries found.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>User</TableHead>
+                        <TableHead>Action</TableHead>
+                        <TableHead>Details</TableHead>
+                        <TableHead>Date/Time</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {auditLogs.map((log) => (
+                        <TableRow key={log._id || log.id}>
+                          <TableCell>
+                            <div className="font-medium text-foreground">{log.userName || log.user || "-"}</div>
+                            <div className="text-xs text-muted-foreground">{log.userEmail || ""}</div>
+                          </TableCell>
+                          <TableCell>{log.action}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {typeof log.details === "object"
+                              ? JSON.stringify(log.details)
+                              : log.details || "-"}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {log.timestamp
+                              ? new Date(log.timestamp).toLocaleString()
+                              : "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

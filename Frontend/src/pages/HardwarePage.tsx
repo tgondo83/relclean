@@ -56,6 +56,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,6 +160,7 @@ const blankForm = () => ({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const HardwarePage = () => {
+  usePageTitle("Hardware");
   const [devices, setDevices] = useState<HardwareDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 

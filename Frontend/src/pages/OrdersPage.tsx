@@ -3,11 +3,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, MoreHorizontal, RefreshCw, Trash2, Edit, RotateCcw, Plus, Minus, X, Calendar } from "lucide-react";
+import { Search, MoreHorizontal, RefreshCw, Edit, RotateCcw, Plus, Minus, X, Calendar, Pencil, Ban } from "lucide-react";
+import { formatDate } from "@/lib/utils";
 import { Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { useBranch, getBranchId } from "@/context/BranchContext";
+import { printReceipt } from "@/lib/printReceipt";
+import { useAuth } from "@/context/AuthContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 interface OrderItem {
   name: string;
@@ -50,15 +54,18 @@ interface OrderItem {
 }
 
 interface Order {
+  _id?: string;
   id: string;
   orderNumber: string;
   branchId: string;
   branchPrefix: string;
   customer: string;
+  customerPhone?: string;
   status: string;
   total: number;
   paidAmount?: number;
   paymentStatus?: 'unpaid' | 'partial' | 'paid';
+  paymentMethod?: 'cash' | 'card' | 'mobile_money' | 'bank_transfer';
   date: string;
   items: (string | OrderItem)[];
   totalPieces?: number;
@@ -78,13 +85,18 @@ const paymentStatusColor: Record<string, string> = {
 };
 
 const OrdersPage = () => {
+  usePageTitle("Orders");
   const navigate = useNavigate();
   const { selectedBranch } = useBranch();
+  const { user } = useAuth();
+  const canEditOrders = user?.role === 'admin' || user?.role === 'manager';
   const [orders, setOrders] = useState<Order[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
+  // ...existing code...
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -92,6 +104,66 @@ const OrdersPage = () => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [newStatus, setNewStatus] = useState("");
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+
+  // Filtering logic: search, status, payment, date
+  useEffect(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let result = orders;
+
+    // Status filter
+    if (statusFilter !== "all") {
+      result = result.filter((o) => o.status === statusFilter);
+    }
+
+    // Payment status filter
+    if (paymentFilter !== "all") {
+      result = result.filter((o) => (o.paymentStatus || "unpaid") === paymentFilter);
+    }
+
+    // Payment method filter
+    if (paymentMethodFilter !== "all") {
+      result = result.filter((o) => o.paymentMethod === paymentMethodFilter);
+    }
+
+    // Date range filter
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setHours(0, 0, 0, 0);
+      result = result.filter((o) => new Date(o.date) >= from);
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      result = result.filter((o) => new Date(o.date) <= to);
+    }
+
+    // Text search across multiple fields
+    if (q) {
+      result = result.filter((order) => {
+        // Order number & ID
+        if (order.orderNumber?.toLowerCase().includes(q)) return true;
+        if (order.id?.toLowerCase().includes(q)) return true;
+        // Customer name
+        if (order.customer?.toLowerCase().includes(q)) return true;
+        // Customer phone
+        if (order.customerPhone?.toLowerCase().includes(q)) return true;
+        // Status labels
+        if (order.status?.toLowerCase().includes(q)) return true;
+        if ((order.paymentStatus || "").toLowerCase().includes(q)) return true;
+        // Total amount
+        if (order.total?.toFixed(2).includes(q)) return true;
+        // Item names
+        if (order.items?.some((item) =>
+          typeof item === "string"
+            ? item.toLowerCase().includes(q)
+            : item.name?.toLowerCase().includes(q)
+        )) return true;
+        return false;
+      });
+    }
+
+    setFilteredOrders(result);
+  }, [searchQuery, statusFilter, paymentFilter, paymentMethodFilter, dateFrom, dateTo, orders]);
 
   // Edit, Delete, Refund state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -126,162 +198,39 @@ const OrdersPage = () => {
     fetchOrders();
   }, [selectedBranch]);
 
-  useEffect(() => {
-    const q = searchQuery.trim().toLowerCase();
-    let result = orders;
-
-    // Status filter
-    if (statusFilter !== "all") {
-      result = result.filter((o) => o.status === statusFilter);
-    }
-
-    // Payment status filter
-    if (paymentFilter !== "all") {
-      result = result.filter((o) => (o.paymentStatus || "unpaid") === paymentFilter);
-    }
-
-    // Date range filter
-    if (dateFrom) {
-      const from = new Date(dateFrom);
-      from.setHours(0, 0, 0, 0);
-      result = result.filter((o) => new Date(o.date) >= from);
-    }
-    if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
-      result = result.filter((o) => new Date(o.date) <= to);
-    }
-
-    // Text search across multiple fields
-    if (q) {
-      result = result.filter((order) => {
-        // Order number & ID
-        if (order.orderNumber?.toLowerCase().includes(q)) return true;
-        if (order.id?.toLowerCase().includes(q)) return true;
-        // Customer name
-        if (order.customer?.toLowerCase().includes(q)) return true;
-        // Status labels
-        if (order.status?.toLowerCase().includes(q)) return true;
-        if ((order.paymentStatus || "").toLowerCase().includes(q)) return true;
-        // Total amount
-        if (order.total?.toFixed(2).includes(q)) return true;
-        // Item names
-        if (order.items?.some((item) =>
-          typeof item === "string"
-            ? item.toLowerCase().includes(q)
-            : item.name?.toLowerCase().includes(q)
-        )) return true;
-        return false;
-      });
-    }
-
-    setFilteredOrders(result);
-  }, [searchQuery, statusFilter, paymentFilter, dateFrom, dateTo, orders]);
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
-    });
-  };
-
-  const handleViewDetails = (order: Order) => {
-    // Navigate to payment page with order data for viewing
-    const orderId = order.id || order.orderNumber;
-    navigate(`/payment?orderId=${encodeURIComponent(orderId)}`, {
-      state: {
-        order: {
-          id: order.id,
-          orderNumber: order.orderNumber,
-          branchId: order.branchId,
-          branchPrefix: order.branchPrefix,
-          customer: order.customer,
-          items: order.items,
-          totalPieces: order.totalPieces,
-          total: order.total,
-          status: order.status,
-        },
-      },
-    });
-  };
-
-  const handleOpenStatusDialog = (order: Order) => {
-    setSelectedOrder(order);
-    setNewStatus(order.status);
-    setStatusDialogOpen(true);
-  };
-
-  const handleUpdateStatus = async () => {
-    if (!selectedOrder || !newStatus) return;
-
-    setIsUpdatingStatus(true);
+  const handlePrintReceipt = async (order: Order) => {
+    // Try to resolve customer phone
+    let customerPhone = "";
     try {
-      const orderId = selectedOrder.id || selectedOrder.orderNumber;
-      const { error } = await api.updateOrder(orderId, { status: newStatus });
+      const { data: custData } = await api.getCustomers();
+      const customers = ((custData as { customers?: { name: string; phone: string }[] })?.customers) || (custData as { name: string; phone: string }[]) || [];
+      const match = customers.find((c) => c.name?.toLowerCase() === order.customer?.toLowerCase());
+      if (match) customerPhone = match.phone;
+    } catch { /* non-critical */ }
 
-      if (error) {
-        alert("Failed to update status: " + error);
-        return;
-      }
+    // Fetch payment methods for this order
+    let paymentMethods: string[] = [];
+    try {
+      const orderId = order._id || order.id || order.orderNumber;
+      const { data: payData } = await api.getPaymentsForOrder(orderId);
+      const pmts = (payData as { payments?: { paymentMethod: string }[] })?.payments || (payData as { paymentMethod: string }[]) || [];
+      paymentMethods = [...new Set(pmts.map((p: { paymentMethod: string }) => p.paymentMethod).filter(Boolean))];
+    } catch { /* non-critical */ }
 
-      // Update local state
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === selectedOrder.id ? { ...o, status: newStatus } : o
-        )
-      );
-      setStatusDialogOpen(false);
-    } catch (error) {
-      console.error("Error updating status:", error);
-      alert("Failed to update status. Please try again.");
-    } finally {
-      setIsUpdatingStatus(false);
-    }
-  };
-
-  const handlePrintReceipt = (order: Order) => {
-    const itemsList = order.items.map((item) => {
-      if (typeof item === 'string') return `  • ${item}`;
-      return `  • ${item.name} x${item.qty} (${item.pieces * item.qty} pcs)`;
-    }).join("\\n");
-    
-    const receiptContent = `
-========================================
-              RECEIPT
-========================================
-Order #: ${order.orderNumber || order.id}
-Date: ${formatDate(order.date)}
-Customer: ${order.customer}
-Status: ${order.status.toUpperCase()}
-----------------------------------------
-Items:
-${itemsList}
-----------------------------------------
-Total Pieces: ${order.totalPieces || '-'}
-Total: $${order.total.toFixed(2)}
-========================================
-        Thank you for your business!
-========================================
-    `;
-
-    const printWindow = window.open("", "_blank", "width=400,height=600");
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Receipt - ${order.orderNumber || order.id}</title>
-            <style>
-              body { font-family: monospace; white-space: pre; padding: 20px; }
-            </style>
-          </head>
-          <body>${receiptContent}</body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.print();
-    }
+    printReceipt({
+      orderNumber: order.orderNumber,
+      id: order.id,
+      customer: order.customer,
+      customerPhone,
+      status: order.status,
+      date: order.date,
+      items: order.items,
+      totalPieces: order.totalPieces,
+      total: order.total,
+      paidAmount: order.paidAmount,
+      paymentStatus: order.paymentStatus,
+      paymentMethod: paymentMethods,
+    });
   };
 
   // Edit Order
@@ -363,6 +312,7 @@ Total: $${order.total.toFixed(2)}
         )
       );
       setEditDialogOpen(false);
+      fetchOrders();
     } catch (error) {
       console.error("Error updating order:", error);
       alert("Failed to update order. Please try again.");
@@ -371,7 +321,7 @@ Total: $${order.total.toFixed(2)}
     }
   };
 
-  // Delete Order
+  // Cancel Order
   const handleOpenDeleteDialog = (order: Order) => {
     setSelectedOrder(order);
     setDeleteDialogOpen(true);
@@ -383,18 +333,19 @@ Total: $${order.total.toFixed(2)}
     setIsDeleting(true);
     try {
       const orderId = selectedOrder.id || selectedOrder.orderNumber;
-      const { error } = await api.deleteOrder(orderId);
+      const { error } = await api.updateOrder(orderId, { status: 'cancelled' });
 
       if (error) {
-        alert("Failed to delete order: " + error);
+        alert("Failed to cancel order: " + error);
         return;
       }
 
-      setOrders((prev) => prev.filter((o) => o.id !== selectedOrder.id));
+      setOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, status: 'cancelled' } : o));
       setDeleteDialogOpen(false);
+      fetchOrders();
     } catch (error) {
-      console.error("Error deleting order:", error);
-      alert("Failed to delete order. Please try again.");
+      console.error("Error cancelling order:", error);
+      alert("Failed to cancel order. Please try again.");
     } finally {
       setIsDeleting(false);
     }
@@ -444,11 +395,46 @@ Total: $${order.total.toFixed(2)}
         )
       );
       setRefundDialogOpen(false);
+      fetchOrders();
     } catch (error) {
       console.error("Error refunding order:", error);
       alert("Failed to refund order. Please try again.");
     } finally {
       setIsRefunding(false);
+    }
+  };
+
+  const handleViewDetails = (order: Order) => {
+    const id = order._id || order.id || order.orderNumber;
+    navigate(`/payment?orderId=${id}`);
+  };
+
+  const handleOpenStatusDialog = (order: Order) => {
+    setSelectedOrder(order);
+    setNewStatus(order.status);
+    setStatusDialogOpen(true);
+  };
+
+  const handleUpdateStatus = async () => {
+    if (!selectedOrder || !newStatus) return;
+    setIsUpdatingStatus(true);
+    try {
+      const orderId = selectedOrder._id || selectedOrder.id || selectedOrder.orderNumber;
+      const { error } = await api.updateOrder(orderId, { status: newStatus });
+      if (error) {
+        alert("Failed to update status: " + error);
+        return;
+      }
+      setOrders((prev) =>
+        prev.map((o) => o.id === selectedOrder.id ? { ...o, status: newStatus } : o)
+      );
+      setStatusDialogOpen(false);
+      fetchOrders();
+    } catch (error) {
+      console.error("Error updating status:", error);
+      alert("Failed to update status. Please try again.");
+    } finally {
+      setIsUpdatingStatus(false);
     }
   };
 
@@ -460,7 +446,7 @@ Total: $${order.total.toFixed(2)}
           <div className="relative w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
-              placeholder="Search by order #, customer, item, amount..." 
+              placeholder="Search by order #, customer, phone, item, amount..." 
               className="pl-9" 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -491,58 +477,73 @@ Total: $${order.total.toFixed(2)}
           </div>
         </div>
 
-        {/* Filter chips */}
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-xs text-muted-foreground font-medium">Status:</span>
-          {["all", "processing", "completed", "pending", "cancelled"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                statusFilter === s
-                  ? "bg-accent text-accent-foreground border-accent"
-                  : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
-              }`}
-            >
-              {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
-          <span className="ml-3 text-xs text-muted-foreground font-medium">Payment:</span>
-          {["all", "unpaid", "partial", "paid"].map((p) => (
-            <button
-              key={p}
-              onClick={() => setPaymentFilter(p)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                paymentFilter === p
-                  ? "bg-accent text-accent-foreground border-accent"
-                  : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
-              }`}
-            >
-              {p === "all" ? "All" : p.charAt(0).toUpperCase() + p.slice(1)}
-            </button>
-          ))}
-          {(statusFilter !== "all" || paymentFilter !== "all" || searchQuery || dateFrom || dateTo) && (
-            <button
-              onClick={() => { setStatusFilter("all"); setPaymentFilter("all"); setSearchQuery(""); setDateFrom(""); setDateTo(""); }}
-              className="ml-2 px-3 py-1 rounded-full text-xs font-medium border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              Clear all
-            </button>
-          )}
-          <span className="ml-auto text-xs text-muted-foreground">{filteredOrders.length} of {orders.length} orders</span>
-        </div>
 
-        {/* Date range filter */}
-        <div className="flex items-center gap-3">
-          <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-          <span className="text-xs text-muted-foreground font-medium">Date:</span>
+
+        {/* Filters stacked vertically as shown in image */}
+        <div className="flex flex-col gap-2 mb-2">
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Status:</span>
+            {["all", "processing", "completed", "pending", "cancelled"].map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  statusFilter === s
+                    ? "bg-destructive text-white border-destructive"
+                    : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                }`}
+              >
+                {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Payment:</span>
+            {["all", "unpaid", "partial", "paid"].map((p) => (
+              <button
+                key={p}
+                onClick={() => setPaymentFilter(p)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  paymentFilter === p
+                    ? "bg-destructive text-white border-destructive"
+                    : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                }`}
+              >
+                {p === "all" ? "All" : p.charAt(0).toUpperCase() + p.slice(1)}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Method:</span>
+            {[
+              { value: "all", label: "All" },
+              { value: "cash", label: "Cash" },
+              { value: "card", label: "Card" },
+              { value: "mobile_money", label: "Mobile Money" },
+              { value: "bank_transfer", label: "Bank Transfer" },
+            ].map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => setPaymentMethodFilter(value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  paymentMethodFilter === value
+                    ? "bg-destructive text-white border-destructive"
+                    : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="text-xs text-muted-foreground font-medium">Date:</span>
             <Input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               className="h-8 text-xs w-36"
-              placeholder="From"
+              placeholder="dd/mm/yyyy"
             />
             <span className="text-xs text-muted-foreground">to</span>
             <Input
@@ -550,17 +551,11 @@ Total: $${order.total.toFixed(2)}
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
               className="h-8 text-xs w-36"
-              placeholder="To"
+              placeholder="dd/mm/yyyy"
             />
+            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
           </div>
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(""); setDateTo(""); }}
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-            >
-              <X className="w-3 h-3" /> Clear dates
-            </button>
-          )}
+          <span className="text-xs text-muted-foreground">{filteredOrders.length} of {orders.length} orders</span>
         </div>
 
         <Card>
@@ -572,9 +567,9 @@ Total: $${order.total.toFixed(2)}
             ) : filteredOrders.length === 0 ? (
               <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground mb-2">
-                  {(searchQuery || statusFilter !== "all" || paymentFilter !== "all") ? 'No orders match your search or filters' : 'No orders yet'}
+                  {(searchQuery || statusFilter !== "all" || paymentFilter !== "all" || paymentMethodFilter !== "all") ? 'No orders match your search or filters' : 'No orders yet'}
                 </p>
-                {!(searchQuery || statusFilter !== "all" || paymentFilter !== "all") && (
+                {!(searchQuery || statusFilter !== "all" || paymentFilter !== "all" || paymentMethodFilter !== "all") && (
                   <Link to="/orders/new">
                     <Button variant="outline" size="sm">
                       Create your first order
@@ -589,6 +584,7 @@ Total: $${order.total.toFixed(2)}
                     <tr className="border-b border-border bg-muted/50">
                       <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Order #</th>
                       <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Customer</th>
+                      <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Phone</th>
                       <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Date</th>
                       <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Status</th>
                       <th className="text-left px-5 py-3 font-semibold text-muted-foreground">Payment</th>
@@ -602,6 +598,7 @@ Total: $${order.total.toFixed(2)}
                       <tr key={order.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                         <td className="px-5 py-3.5 font-semibold text-foreground">{order.orderNumber || `ORD-${order.id}`}</td>
                         <td className="px-5 py-3.5 text-foreground">{order.customer}</td>
+                        <td className="px-5 py-3.5 text-muted-foreground text-xs">{order.customerPhone || '—'}</td>
                         <td className="px-5 py-3.5 text-muted-foreground">{formatDate(order.date)}</td>
                         <td className="px-5 py-3.5">
                           <Badge variant="outline" className={statusColor[order.status] || statusColor.pending}>
@@ -643,24 +640,28 @@ Total: $${order.total.toFixed(2)}
                               <DropdownMenuItem onClick={() => handlePrintReceipt(order)}>
                                 Print Receipt
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => handleOpenEditDialog(order)}>
-                                <Edit className="w-4 h-4 mr-2" />
-                                Edit Order
-                              </DropdownMenuItem>
-                              {order.paymentStatus === 'paid' && (
+                              {canEditOrders && <DropdownMenuSeparator />}
+                              {canEditOrders && (
+                                <DropdownMenuItem onClick={() => handleOpenEditDialog(order)}>
+                                  <Edit className="w-4 h-4 mr-2" />
+                                  Edit Order
+                                </DropdownMenuItem>
+                              )}
+                              {order.paymentStatus === 'paid' && canEditOrders && (
                                 <DropdownMenuItem onClick={() => handleOpenRefundDialog(order)}>
                                   <RotateCcw className="w-4 h-4 mr-2" />
                                   Refund Order
                                 </DropdownMenuItem>
                               )}
-                              <DropdownMenuItem 
-                                onClick={() => handleOpenDeleteDialog(order)}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Delete Order
-                              </DropdownMenuItem>
+                              {canEditOrders && order.status !== 'cancelled' && (
+                                <DropdownMenuItem 
+                                  onClick={() => handleOpenDeleteDialog(order)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Ban className="w-4 h-4 mr-2" />
+                                  Cancel Order
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </td>
@@ -831,24 +832,24 @@ Total: $${order.total.toFixed(2)}
           </DialogContent>
         </Dialog>
 
-        {/* Delete Order Confirmation */}
+        {/* Cancel Order Confirmation */}
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete Order</AlertDialogTitle>
+              <AlertDialogTitle>Cancel Order</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete order {selectedOrder?.orderNumber || selectedOrder?.id}? 
-                This action cannot be undone.
+                Are you sure you want to cancel order {selectedOrder?.orderNumber || selectedOrder?.id}? 
+                The order will remain visible with a Cancelled status.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={isDeleting}>Go Back</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDeleteOrder}
                 disabled={isDeleting}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
-                {isDeleting ? "Deleting..." : "Delete"}
+                {isDeleting ? "Cancelling..." : "Cancel Order"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

@@ -4,13 +4,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { Download, TrendingUp, DollarSign, Users, ShoppingCart } from "lucide-react";
+import { Download, TrendingUp, DollarSign, Users, ShoppingCart, Printer } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useBranch, getBranchId } from "@/context/BranchContext";
 import { api } from "@/lib/api";
+import { printDailyOverview } from "@/lib/printReceipt";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 interface DashboardMetrics {
   revenue: { total: number; change: number; chartData: { month: string; value: number }[] };
@@ -44,7 +54,21 @@ interface DailyOrdersResponse {
   dailyOrders: { day: string; date: string; orders: number }[];
 }
 
+interface DailyOverviewData {
+  totalOrders: number;
+  totalPieces: number;
+  totalRevenue: number;
+  unpaidAmount: number;
+  ordersByStatus: { status: string; count: number }[];
+  revenueByPaymentMethod: { method: string; amount: number; count: number }[];
+  revenueByCurrency: { currency: string; symbol: string; originalAmount: number; usdAmount: number; count: number }[];
+  topItems: { name: string; qty: number; revenue: number }[];
+}
+
+const RECEIPT_STORAGE_KEY = "receiptSettings";
+
 const MetricsPage = () => {
+  usePageTitle("Metrics");
   const { branches } = useBranch();
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
@@ -60,6 +84,43 @@ const MetricsPage = () => {
   const [revenueByCurrency, setRevenueByCurrency] = useState<RevenueByCurrency | null>(null);
   const [topCustomersData, setTopCustomersData] = useState<TopCustomersResponse | null>(null);
   const [dailyOrdersData, setDailyOrdersData] = useState<DailyOrdersResponse | null>(null);
+
+  // Day's overview state
+  const [isDailyOverviewOpen, setIsDailyOverviewOpen] = useState(false);
+  const [isDailyLoading, setIsDailyLoading] = useState(false);
+  const [dailyOverview, setDailyOverview] = useState<DailyOverviewData | null>(null);
+  const [dailyOverviewError, setDailyOverviewError] = useState<string | null>(null);
+  const [dailyOverviewDate, setDailyOverviewDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const fetchDailyOverview = useCallback(async (dateStr?: string) => {
+    const targetDate = dateStr || dailyOverviewDate;
+    setIsDailyLoading(true);
+    setIsDailyOverviewOpen(true);
+    setDailyOverview(null);
+    setDailyOverviewError(null);
+    try {
+      const branchId = reportBranch === "all" ? undefined : reportBranch;
+      const { data, error } = await api.getDailyOverview(branchId, targetDate);
+      if (error || !data) {
+        setDailyOverviewError(typeof error === 'string' ? error : 'Failed to load overview data.');
+        return;
+      }
+      setDailyOverview(data as DailyOverviewData);
+    } catch (err) {
+      setDailyOverviewError(err instanceof Error ? err.message : 'Failed to load overview data.');
+    } finally {
+      setIsDailyLoading(false);
+    }
+  }, [reportBranch, dailyOverviewDate]);
+
+  const handlePrintDailyOverview = (date: string) => {
+    if (!dailyOverview) return;
+    const branchLabel =
+      reportBranch === "all"
+        ? "All Branches"
+        : (branches.find((b) => getBranchId(b) === reportBranch)?.name ?? reportBranch);
+    printDailyOverview(dailyOverview, branchLabel, date);
+  };
 
   const fetchMetrics = useCallback(async () => {
     setIsLoading(true);
@@ -260,6 +321,9 @@ const MetricsPage = () => {
               </div>
               <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={isLoading}>
                 <Download className="w-4 h-4 mr-1" /> Export CSV
+              </Button>
+              <Button variant="default" size="sm" onClick={() => fetchDailyOverview()} disabled={isDailyLoading}>
+                <Printer className="w-4 h-4 mr-1" /> Day's Overview
               </Button>
             </div>
           </CardContent>
@@ -613,6 +677,127 @@ const MetricsPage = () => {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Day's Overview Print Dialog */}
+      <Dialog open={isDailyOverviewOpen} onOpenChange={setIsDailyOverviewOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Day's Overview — {new Date(dailyOverviewDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center gap-3">
+            <Label className="text-xs whitespace-nowrap">Select Date</Label>
+            <Input
+              type="date"
+              value={dailyOverviewDate}
+              onChange={(e) => {
+                setDailyOverviewDate(e.target.value);
+                fetchDailyOverview(e.target.value);
+              }}
+              className="w-44"
+            />
+          </div>
+
+          {isDailyLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">Loading today's data...</div>
+          ) : dailyOverviewError ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-2 text-destructive text-sm">
+              <span>{dailyOverviewError}</span>
+              <Button variant="outline" size="sm" onClick={() => fetchDailyOverview(dailyOverviewDate)}>Retry</Button>
+            </div>
+          ) : dailyOverview ? (
+            <>
+              {/* Preview (visible in dialog) */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Total Orders", value: String(dailyOverview.totalOrders) },
+                    { label: "Total Pieces", value: String(dailyOverview.totalPieces) },
+                    { label: "Total Revenue", value: `$${dailyOverview.totalRevenue.toFixed(2)}` },
+                    { label: "Unpaid Amount", value: `$${dailyOverview.unpaidAmount.toFixed(2)}`, red: true },
+                  ].map((s) => (
+                    <Card key={s.label}>
+                      <CardContent className="p-3">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</span>
+                        <div className={`text-xl font-extrabold mt-0.5 ${s.red ? "text-destructive" : "text-foreground"}`}>{s.value}</div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                {dailyOverview.ordersByStatus.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">Orders by Status</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {dailyOverview.ordersByStatus.map((s) => (
+                        <Badge key={s.status} variant="secondary">{s.status}: {s.count}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {dailyOverview.revenueByCurrency.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">Revenue by Currency</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Currency</TableHead>
+                          <TableHead className="text-xs text-right">Amount</TableHead>
+                          <TableHead className="text-xs text-right">USD Equiv.</TableHead>
+                          <TableHead className="text-xs text-right">Txns</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {dailyOverview.revenueByCurrency.map((c) => (
+                          <TableRow key={c.currency}>
+                            <TableCell className="text-sm">{c.currency}</TableCell>
+                            <TableCell className="text-sm text-right">{c.symbol}{c.originalAmount.toFixed(2)}</TableCell>
+                            <TableCell className="text-sm text-right">${c.usdAmount.toFixed(2)}</TableCell>
+                            <TableCell className="text-sm text-right">{c.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {dailyOverview.revenueByPaymentMethod.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">Revenue by Payment Method</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Method</TableHead>
+                          <TableHead className="text-xs text-right">Amount (USD)</TableHead>
+                          <TableHead className="text-xs text-right">Txns</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {dailyOverview.revenueByPaymentMethod.map((m) => (
+                          <TableRow key={m.method}>
+                            <TableCell className="text-sm">{m.method}</TableCell>
+                            <TableCell className="text-sm text-right">${m.amount.toFixed(2)}</TableCell>
+                            <TableCell className="text-sm text-right">{m.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">No data available</div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDailyOverviewOpen(false)}>Close</Button>
+            <Button onClick={() => handlePrintDailyOverview(dailyOverviewDate)} disabled={!dailyOverview}>
+              <Printer className="w-4 h-4 mr-1" /> Print
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

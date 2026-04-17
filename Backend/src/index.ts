@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
@@ -39,6 +40,7 @@ app.use(
   })
 );
 
+app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

@@ -25,7 +25,8 @@ paymentsRouter.get('/', async (req, res) => {
     const payments = await Payment.find(query)
       .populate('orderId', 'orderNumber branchPrefix status')
       .populate('customerId', 'name phone email')
-      .sort({ paymentDate: -1 });
+      .sort({ paymentDate: -1 })
+      .lean();
     
     res.json({ payments });
   } catch (error) {
@@ -209,7 +210,8 @@ paymentsRouter.post('/', async (req, res) => {
 
       await Order.findByIdAndUpdate(resolvedOrderId, {
         paidAmount: newPaidAmount,
-        paymentStatus: paymentStatusUpdate
+        paymentStatus: paymentStatusUpdate,
+        paymentMethod: paymentMethod || 'cash',
       });
     }
     

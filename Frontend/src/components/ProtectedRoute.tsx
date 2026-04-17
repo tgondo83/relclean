@@ -4,10 +4,10 @@ import { useBranch } from "@/context/BranchContext";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
-  const { branchConfirmed, isLoading: branchLoading } = useBranch();
+  const { branchConfirmed } = useBranch();
   const location = useLocation();
 
-  if (isLoading || branchLoading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">

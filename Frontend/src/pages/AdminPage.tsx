@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 // Item icons mapping based on item name/category
 const getItemIcon = (name: string, category: string) => {
@@ -66,6 +67,7 @@ type CatalogItem = {
 };
 
 const AdminPage = () => {
+  usePageTitle("Admin");
   const navigate = useNavigate();
   const [exchangeRate, setExchangeRate] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);

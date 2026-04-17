@@ -35,6 +35,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ const categoryColor = (cat: string) => {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const BulkUpdatePage = () => {
+  usePageTitle("Bulk Update");
   const navigate = useNavigate();
 
   const [rows, setRows] = useState<EditRow[]>([]);

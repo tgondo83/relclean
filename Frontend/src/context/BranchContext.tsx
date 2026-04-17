@@ -19,6 +19,7 @@ interface BranchContextType {
   branchConfirmed: boolean;
   isLoading: boolean;
   getBranchId: (branch: Branch | null | undefined) => string;
+  refreshBranches: () => Promise<void>;
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined);
@@ -71,42 +72,49 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
   );
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchBranches = async () => {
-      try {
-        const { data } = await api.getBranches();
-        const responseData = data as { branches?: unknown[] } | undefined;
-        if (responseData?.branches) {
-          const normalized = normalizeBranches(responseData.branches);
-          const activeBranches = normalized.filter((b) => b.active !== false && hasValidMongoId(b));
-          setBranches(activeBranches);
+  const fetchBranches = async () => {
+    setIsLoading(true);
+    try {
+      // Race against a timeout so a sleeping backend doesn't block the UI
+      const branchPromise = api.getBranches();
+      const timeoutPromise = new Promise<{ data: undefined }>((resolve) =>
+        setTimeout(() => resolve({ data: undefined }), 15000)
+      );
+      const { data } = await Promise.race([branchPromise, timeoutPromise]);
 
-          // Restore previously selected branch from localStorage
-          const savedBranchId = localStorage.getItem(STORAGE_KEY);
-          if (savedBranchId) {
-            const savedBranch = activeBranches.find(
-              (b) => getBranchId(b) === savedBranchId
-            );
-            if (savedBranch) {
-              setSelectedBranch(savedBranch);
-              setIsLoading(false);
-              return;
-            }
-          }
+      const responseData = data as { branches?: unknown[] } | undefined;
+      if (responseData?.branches) {
+        const normalized = normalizeBranches(responseData.branches);
+        const activeBranches = normalized.filter((b) => b.active !== false && hasValidMongoId(b));
+        setBranches(activeBranches);
 
-          // Default to first branch if none saved
-          if (activeBranches.length > 0) {
-            setSelectedBranch(activeBranches[0]);
-            localStorage.setItem(STORAGE_KEY, getBranchId(activeBranches[0]));
+        // Restore previously selected branch from localStorage
+        const savedBranchId = localStorage.getItem(STORAGE_KEY);
+        if (savedBranchId) {
+          const savedBranch = activeBranches.find(
+            (b) => getBranchId(b) === savedBranchId
+          );
+          if (savedBranch) {
+            setSelectedBranch(savedBranch);
+            setIsLoading(false);
+            return;
           }
         }
-      } catch (error) {
-        console.error("Failed to fetch branches:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
 
+        // Default to first branch if none saved
+        if (activeBranches.length > 0) {
+          setSelectedBranch(activeBranches[0]);
+          localStorage.setItem(STORAGE_KEY, getBranchId(activeBranches[0]));
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch branches:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchBranches();
   }, []);
 
@@ -115,23 +123,7 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const handleLogout = () => {
       setBranchConfirmed(false);
-      // Re-fetch so the branch list is fresh for the next session
-      const refetch = async () => {
-        try {
-          const { data } = await api.getBranches();
-          const responseData = data as { branches?: unknown[] } | undefined;
-          if (responseData?.branches) {
-            const normalized = normalizeBranches(responseData.branches);
-            const activeBranches = normalized.filter(
-              (b) => b.active !== false && hasValidMongoId(b)
-            );
-            setBranches(activeBranches);
-          }
-        } catch {
-          // silent — branches already in memory as fallback
-        }
-      };
-      refetch();
+      fetchBranches();
     };
 
     window.addEventListener("auth:logout", handleLogout);
@@ -164,6 +156,7 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
         branchConfirmed,
         isLoading,
         getBranchId,
+        refreshBranches: fetchBranches,
       }}
     >
       {children}

@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { logActivity } from '../middleware/auditLog';
 import Item from '../models/Item';
 import mongoose from 'mongoose';
 
@@ -53,7 +54,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // Create new item
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', logActivity('item_create'), async (req: Request, res: Response) => {
   try {
     const { name, price, category, pieces, description, icon, branchId, isActive } = req.body;
 
@@ -92,7 +93,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // Update item
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', logActivity('item_update'), async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const { name, price, category, pieces, description, icon, branchId, isActive } = req.body;
@@ -141,7 +142,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // Delete item
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', logActivity('item_delete'), async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
 

@@ -14,14 +14,21 @@ import {
   LogOut,
   ChevronRight,
 } from "lucide-react";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 const BranchSelectPage = () => {
-  const { branches, selectedBranch, confirmBranch, branchConfirmed, isLoading } = useBranch();
+  usePageTitle("Select Branch");
+  const { branches, selectedBranch, confirmBranch, branchConfirmed, isLoading, refreshBranches } = useBranch();
   const { user, logout } = useAuth();
   const { logo } = useLogo();
   const navigate = useNavigate();
 
   const canChangeBranch = user?.role === "admin" || user?.role === "manager";
+
+  // Always refresh branches when this page mounts (e.g. after login)
+  useEffect(() => {
+    refreshBranches();
+  }, []);
 
   // Guard: non-privileged user who already has a confirmed branch has no
   // reason to be on this page — log them out. Must be in useEffect so it

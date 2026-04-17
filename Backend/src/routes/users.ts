@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { User } from '../models/User.js';
 import mongoose from 'mongoose';
 import { requireRole } from '../middleware/auth.js';
+import { logActivity } from '../middleware/auditLog';
 import {
   getAllUsers,
   getUserById as getMockUserById,
@@ -56,7 +57,7 @@ usersRouter.get('/:id', async (req, res) => {
 });
 
 // Create new user
-usersRouter.post('/', async (req, res) => {
+usersRouter.post('/', logActivity('user_create'), async (req, res) => {
   try {
     const userData = req.body;
 
@@ -87,7 +88,7 @@ usersRouter.post('/', async (req, res) => {
 });
 
 // Update user (password changes must go through /auth/change-password or /:id/reset-password)
-usersRouter.put('/:id', async (req, res) => {
+usersRouter.put('/:id', logActivity('user_update'), async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -117,7 +118,7 @@ usersRouter.put('/:id', async (req, res) => {
 });
 
 // Reset a user's password (admin/manager only)
-usersRouter.post('/:id/reset-password', requireRole('admin', 'manager'), async (req, res) => {
+usersRouter.post('/:id/reset-password', requireRole('admin', 'manager'), logActivity('user_reset_password'), async (req, res) => {
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
@@ -146,7 +147,7 @@ usersRouter.post('/:id/reset-password', requireRole('admin', 'manager'), async (
 });
 
 // Delete user
-usersRouter.delete('/:id', async (req, res) => {
+usersRouter.delete('/:id', logActivity('user_delete'), async (req, res) => {
   try {
     const { id } = req.params;
 
